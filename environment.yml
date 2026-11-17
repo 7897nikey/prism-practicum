@@ -7,4 +7,4 @@ dependencies:
   - pip
   - pip:
       - notebook
-      - google-genai>=2.33
+      - google-genai>=2.33,<3
