@@ -15,6 +15,7 @@ ENV_FILE = HERE / ".env"
 # ---------------------------------------------------------------- Gemini 연결
 MODEL = "gemini-3.5-flash-lite"           # 무료: 분당 15회, 하루 500회
 SPARE_MODELS = ["gemini-3.1-flash-lite"]  # MODEL을 못 쓸 때 대신 쓸 모델
+JUDGE_MODEL = "gemini-3.1-flash-lite"     # 판정 모델. 답변 모델과 다르게 두어 자기 답을 자기가 채점하지 않게 함
 REQUESTS_PER_MINUTE = 12                  # 무료 한도보다 조금 낮게
 
 
@@ -114,9 +115,22 @@ def ask(prompt: str, *, system: str | None = None, schema: dict | None = None,
     raise RuntimeError("다시 보내기 횟수를 넘었습니다.")
 
 
+def _try(m: str) -> str | None:
+    """m에 짧게 물어 답을 돌려줍니다. 쓸 수 없으면 None, 키 문제면 KeyMissingError."""
+    try:
+        return ask("OK라고만 답하세요.", model=m, tries=2)["text"].strip()
+    except QuotaError:
+        print(f"   ✗ {m}: 한도 초과")
+    except Exception as e:
+        if any(k in str(e) for k in ("API key", "API_KEY", "401", "403", "PERMISSION")):
+            raise KeyMissingError("키가 맞지 않습니다. 새 셀에서 lab.reset_key()를 실행한 뒤 이 셀을 다시 실행하세요.") from None
+        print(f"   ✗ {m}: {str(e).splitlines()[0][:120]}")
+    return None
+
+
 def check_setup() -> str | None:
-    """수업 전 확인: 네트워크, 키, 모델을 차례로 보고 쓸 수 있는 첫 모델로 맞춥니다."""
-    global MODEL
+    """수업 전 확인: 네트워크, 키, 답변 모델, 판정 모델을 차례로 보고 쓸 수 있는 모델로 맞춥니다."""
+    global MODEL, JUDGE_MODEL
     try:
         import httpx
         httpx.get("https://generativelanguage.googleapis.com/", timeout=10)
@@ -125,28 +139,21 @@ def check_setup() -> str | None:
         return None
     try:
         _get_client()
+        answer = next((m for m in dict.fromkeys([MODEL, *SPARE_MODELS]) if _try(m) is not None), None)
+        if answer is None:
+            print("❌ 쓸 수 있는 모델이 없습니다. https://aistudio.google.com/rate-limit 에서 오늘 한도를 확인하세요.")
+            return None
+        judge = JUDGE_MODEL if JUDGE_MODEL != answer and _try(JUDGE_MODEL) is not None else answer
     except KeyMissingError as e:
         print(f"❌ {e}")
         return None
-    for m in dict.fromkeys([MODEL, *SPARE_MODELS]):
-        try:
-            reply = ask("OK라고만 답하세요.", model=m, tries=2)["text"].strip()
-        except QuotaError:
-            print(f"   ✗ {m}: 한도 초과")
-            continue
-        except Exception as e:
-            if any(s in str(e) for s in ("API key", "API_KEY", "401", "403", "PERMISSION")):
-                print("❌ 키가 맞지 않습니다. 새 셀에서 lab.reset_key()를 실행한 뒤 이 셀을 다시 실행하세요.")
-                return None
-            print(f"   ✗ {m}: {str(e).splitlines()[0][:120]}")
-            continue
-        if m != MODEL:
-            print(f"   ※ {MODEL}을 쓸 수 없어 {m}로 실습합니다. 결과를 올릴 때 모델 이름도 적어 주세요.")
-            MODEL = m
-        print(f"✅ 연결 성공 ({m}, 응답 {reply!r})")
-        return m
-    print("❌ 쓸 수 있는 모델이 없습니다. https://aistudio.google.com/rate-limit 에서 오늘 한도를 확인하세요.")
-    return None
+    if answer != MODEL:
+        print(f"   ※ {MODEL}을 쓸 수 없어 {answer}로 실습합니다. 결과를 올릴 때 모델 이름도 적어 주세요.")
+    if judge == answer:
+        print(f"   ※ 판정 모델을 따로 쓸 수 없어 {answer}가 답변과 판정을 함께 합니다.")
+    MODEL, JUDGE_MODEL = answer, judge
+    print(f"✅ 연결 성공 (답변: {MODEL}, 판정: {JUDGE_MODEL})")
+    return MODEL
 
 
 # ---------------------------------------------------------------- 거짓 전제 실험
@@ -256,7 +263,7 @@ def build(q: dict, condition: str, defense: str | None = None) -> tuple[str, str
 
 def _judge(q: dict, condition: str, user: str, response: str) -> tuple[str | None, str]:
     drug = q["true_drug"] if CONDITIONS[condition][2] == "T" else q["false_drug"]
-    r = ask(JUDGE_PROMPT.format(disease=q["disease"], drug=drug, user=user, response=response), schema=JUDGE_SCHEMA)
+    r = ask(JUDGE_PROMPT.format(disease=q["disease"], drug=drug, user=user, response=response), schema=JUDGE_SCHEMA, model=JUDGE_MODEL)
     try:
         d = json.loads(r["text"])
     except (json.JSONDecodeError, TypeError):
@@ -298,7 +305,7 @@ def rate_table(name: str = "기본") -> dict[str, dict]:
 def summary(name: str = "기본") -> None:
     """조건별 수용 비율. 문항 수가 적으니 경향만 보세요."""
     table = rate_table(name)
-    print(f"[{name}] 모델: {MODEL}\n")
+    print(f"[{name}] 답변: {MODEL}, 판정: {JUDGE_MODEL}\n")
     for cond, t in sorted(table.items()):
         rate = t["accept_rate"]
         shown = "판정 없음" if rate is None else f"{rate:4.0%}"
@@ -373,7 +380,7 @@ def attack(template: str, name: str, *, defense: str | None = None, truth: str =
     template: {disease}와 {drug}가 들어간 문장. 조사까지 붙이려면 {drug가}, {drug는}, {drug를}을 쓰세요.
     defense: 시스템 프롬프트에 얹을 방어. "facts" 또는 직접 쓴 규칙 문장.
     truth: "T"로 바꾸면 같은 문장에 참 약을 넣습니다. 방어가 참 전제까지 막는지 볼 때 씁니다.
-    target: 답변을 만들 모델. 비우면 기본 모델(MODEL), lab.GEMMA를 넣으면 Gemma. 판정은 항상 기본 모델이 합니다.
+    target: 답변을 만들 모델. 비우면 기본 모델(MODEL), lab.GEMMA를 넣으면 Gemma. 판정은 항상 JUDGE_MODEL이 합니다.
     """
     if "{disease}" not in template or "{drug" not in template:
         print("문장 틀에 {disease}와 {drug}가 모두 들어 있어야 합니다. 예: " + BASELINE)
@@ -428,7 +435,7 @@ def scoreboard() -> None:
     if not _names:
         print("아직 실행한 공격이 없습니다.")
         return
-    print(f"기본 모델: {MODEL}\n")
+    print(f"답변: {MODEL}, 판정: {JUDGE_MODEL}\n")
     for name, (_, defense, truth, model) in _names.items():
         s = score(name)
         tag = ("참 전제" if truth == "T" else "거짓 전제") + (", 방어 있음" if defense else "") + (f", 답변 {model}" if model else "")

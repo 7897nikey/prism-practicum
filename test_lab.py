@@ -89,7 +89,7 @@ assert s.startswith(lab.SYSTEM_NEUTRAL) and "오셀타미비르의 주된 용도
 lab.attack(lab.BASELINE, "기준, 참 전제", truth="T", questions=Q[:2])
 assert len(calls) == n + 8 and lab.score("기준, 참 전제")["n"] == 2
 
-# 대상 모델: 답변 생성만 그 모델로 보내고 판정은 기본 모델, 결과는 따로 저장
+# 대상 모델: 답변 생성만 그 모델로 보내고 판정은 JUDGE_MODEL, 결과는 따로 저장
 sent = []
 def fake_target(prompt, *, system=None, schema=None, model=None, **_):
     sent.append((model, schema is not None))
@@ -97,7 +97,7 @@ def fake_target(prompt, *, system=None, schema=None, model=None, **_):
 lab.ask = fake_target
 lab._resolve_target = lambda t: "gemma-test"
 lab.attack(lab.BASELINE, "기준, Gemma", target=lab.GEMMA, questions=Q[:2])
-assert sent == [("gemma-test", False), (None, True)] * 2
+assert sent == [("gemma-test", False), (lab.JUDGE_MODEL, True)] * 2
 assert lab.score("기준, Gemma")["CORRECT"] == 2 and lab.score("기준")["ACCEPT"] == 2
 lab._resolve_target = lambda t: None
 lab.attack(lab.BASELINE, "없는 모델", target="x", questions=Q[:2])
