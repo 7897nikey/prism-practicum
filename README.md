@@ -17,7 +17,7 @@
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/7897nikey/prism-practicum/blob/main/premise_lab.ipynb)
 
-1. 위 버튼을 눌러 노트북을 엽니다.
+1. 위 버튼을 눌러 노트북을 엽니다. 게시판에서 `premise_lab.ipynb`를 받았다면 https://colab.research.google.com 에서 **파일 → 노트북 업로드**로 열어도 같습니다.
 2. **"0. 준비" 아래 셀만** 실행합니다(`Shift + Enter`). "Google에서 작성하지 않은 노트북" 경고가 뜨면 **무시하고 실행**을 누릅니다.
 3. `키:` 칸에 1단계에서 복사한 키를 붙여 넣고 Enter를 누릅니다. 글자가 보이지 않는 게 정상입니다.
 4. `✅ 연결 성공`이 나오면 준비 끝입니다. 나머지 셀은 수업 시간에 함께 실행합니다.
