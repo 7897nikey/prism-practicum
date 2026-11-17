@@ -54,10 +54,10 @@ def _get_client():
             if len(key) < 20 or " " in key:
                 raise KeyMissingError("키가 비었거나 형식이 이상합니다. 이 셀을 다시 실행해 키 전체를 붙여 넣어 주세요.")
             ENV_FILE.write_text(f"GEMINI_API_KEY={key}\n", encoding="utf-8")
-            print(f"키를 {ENV_FILE.name}에 저장했습니다. 실습 폴더를 남에게 보낼 때 이 파일은 빼세요.", flush=True)
+            print("키를 저장했습니다. 다음부터는 묻지 않습니다.", flush=True)
         from google import genai
         from google.genai import types
-        _client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=120_000))  # Gemma는 1분 넘게 걸리기도 함
+        _client = genai.Client(api_key=key)
     return _client
 
 
@@ -70,10 +70,10 @@ def reset_key() -> None:
     print("저장된 키를 지웠습니다. lab.check_setup()을 다시 실행하세요.")
 
 
-def _send(model: str, prompt: str, system: str | None, schema: dict | None):
+def _send(model: str, prompt: str, system: str | None, schema: dict | None, timeout: int):
     from google.genai import types
     merge = bool(system) and model in _NO_SYSTEM
-    cfg: dict = {}
+    cfg: dict = {"http_options": types.HttpOptions(timeout=timeout * 1000)}   # 밀리초
     if system and not merge:
         cfg["system_instruction"] = system
     if model.startswith("gemini"):
@@ -86,15 +86,18 @@ def _send(model: str, prompt: str, system: str | None, schema: dict | None):
 
 
 def ask(prompt: str, *, system: str | None = None, schema: dict | None = None,
-        model: str | None = None, tries: int = 4) -> dict:
-    """한 번 묻고 {"text": 답변}을 돌려줍니다. 분당 한도에 맞춰 간격을 두고, 한도 초과나 서버 오류는 기다렸다 다시 보냅니다."""
+        model: str | None = None, tries: int = 4, timeout: int = 90) -> dict:
+    """한 번 묻고 {"text": 답변}을 돌려줍니다. 분당 한도에 맞춰 간격을 두고, 한도 초과나 서버 오류는 기다렸다 다시 보냅니다.
+
+    timeout: 한 번 보낸 요청을 기다리는 최대 초. Gemma 같은 느린 모델은 늘리세요.
+    """
     global _next_slot
     model = model or MODEL
     for n in range(1, tries + 1):
         time.sleep(max(0.0, _next_slot - time.time()))
         _next_slot = time.time() + 60 / REQUESTS_PER_MINUTE
         try:
-            return {"text": _send(model, prompt, system, schema).text or ""}
+            return {"text": _send(model, prompt, system, schema, timeout).text or ""}
         except Exception as e:
             msg = str(e)
             busy = "429" in msg or "RESOURCE_EXHAUSTED" in msg
@@ -110,7 +113,8 @@ def ask(prompt: str, *, system: str | None = None, schema: dict | None = None,
                                      "https://aistudio.google.com/rate-limit 에서 오늘 한도를 확인하세요.") from None
                 raise
             pause = 15 * n
-            print(f"   ⏳ {'한도 초과' if busy else '서버 응답 없음'}: {pause}초 뒤 다시 보냅니다 ({n}/{tries - 1})", flush=True)
+            why = "한도 초과" if busy else f"{type(e).__name__}: {msg.splitlines()[0][:100] if msg else '응답 없음'}"
+            print(f"   ⏳ {model} {why}\n      {pause}초 뒤 다시 보냅니다 ({n}/{tries - 1})", flush=True)
             time.sleep(pause)
     raise RuntimeError("다시 보내기 횟수를 넘었습니다.")
 
@@ -118,7 +122,7 @@ def ask(prompt: str, *, system: str | None = None, schema: dict | None = None,
 def _try(m: str) -> str | None:
     """m에 짧게 물어 답을 돌려줍니다. 쓸 수 없으면 None, 키 문제면 KeyMissingError."""
     try:
-        return ask("OK라고만 답하세요.", model=m, tries=2)["text"].strip()
+        return ask("OK라고만 답하세요.", model=m, tries=2, timeout=30)["text"].strip()
     except QuotaError:
         print(f"   ✗ {m}: 한도 초과")
     except Exception as e:
