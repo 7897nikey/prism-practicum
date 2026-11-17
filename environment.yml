@@ -1,0 +1,10 @@
+name: premise-lab
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - notebook
+      - google-genai>=2.33
